@@ -1,0 +1,64 @@
+commit 7e60d11c1b046e54378cf79280f4a856741c8749
+Author: Tobias Stoeckmann <tobias@stoeckmann.org>
+Date:   Sat Aug 22 14:09:58 2020 +0200
+
+    Close iconv in case of allocation error
+    
+    If memory allocation in strdup_locale_from_utf8 fails after calling
+    iconv_open, the returned conversion descriptor is not closed.
+
+diff --git a/src/poptint.c b/src/poptint.c
+index 0cec176..3a0919a 100644
+--- a/src/poptint.c
++++ b/src/poptint.c
+@@ -91,8 +91,10 @@ strdup_locale_from_utf8 (char * istr)
+ 	size_t ob = db;
+ 	size_t err;
+ 
+-	if (dstr == NULL)
++	if (dstr == NULL) {
++	    (void) iconv_close(cd);
+ 	    return NULL;
++	}
+ 	err = iconv(cd, NULL, NULL, NULL, NULL);
+ 	while (1) {
+ 	    *pout = '\0';
+commit 70011cc5763dca9a9b57e9539b465e00c9769996
+Author: Michal Domonkos <mdomonko@redhat.com>
+Date:   Mon Jul 19 14:41:03 2021 +0200
+
+    Fix potential mem leak in poptReadConfigFile()
+    
+    While it seems that the actual implementation of poptReadFile()
+    shouldn't allocate the passed buffer (b) if the number of bytes (nb) is
+    zero (see the read(2) call in that function), it's still up to the
+    caller to take care of this resource, so let's just do that by bailing
+    out via "exit" where the freeing happens.
+    
+    Also initialize t to NULL to avoid freeing an undefined pointer.
+    
+    Found by Coverity.
+
+diff --git a/src/poptconfig.c b/src/poptconfig.c
+index 8623ba2..7c52315 100644
+--- a/src/poptconfig.c
++++ b/src/poptconfig.c
+@@ -344,13 +344,15 @@ int poptReadConfigFile(poptContext con, const char * fn)
+     char * b = NULL, *be;
+     size_t nb = 0;
+     const char *se;
+-    char *t, *te;
++    char *t = NULL, *te;
+     int rc;
+ 
+     if ((rc = poptReadFile(fn, &b, &nb, POPT_READFILE_TRIMNEWLINES)) != 0)
+ 	return (errno == ENOENT ? 0 : rc);
+-    if (b == NULL || nb == 0)
+-	return POPT_ERROR_BADCONFIG;
++    if (b == NULL || nb == 0) {
++	rc = POPT_ERROR_BADCONFIG;
++	goto exit;
++    }
+ 
+     if ((t = malloc(nb + 1)) == NULL)
+ 	goto exit;
